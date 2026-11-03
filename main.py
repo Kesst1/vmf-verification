@@ -1,13 +1,34 @@
 import os
+import sqlite3
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 import requests
 
 app = FastAPI()
 
+# Credenciales de Roblox desde Railway
 CLIENT_ID = os.environ.get("ROBLOX_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("ROBLOX_CLIENT_SECRET")
 REDIRECT_URI = os.environ.get("ROBLOX_REDIRECT_URI")
+
+# Credenciales de Discord para asignar roles desde la web
+DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
+GUILD_ID = os.environ.get("GUILD_ID")
+VERIFIED_ROLE_ID = os.environ.get("VERIFIED_ROLE_ID")
+
+def init_db():
+    conn = sqlite3.connect("verification.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS verified_users (
+            discord_id INTEGER PRIMARY KEY,
+            roblox_id INTEGER UNIQUE
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
 
 @app.get("/")
 async def root():
@@ -17,6 +38,7 @@ async def root():
 async def roblox_callback(code: str, state: str):
     discord_id = state
 
+    # 1. Intercambiar código por token de acceso en Roblox
     token_url = "https://apis.roblox.com/oauth/v1/token"
     payload = {
         "client_id": CLIENT_ID,
@@ -33,6 +55,7 @@ async def roblox_callback(code: str, state: str):
     token_data = resp.json()
     access_token = token_data.get("access_token")
 
+    # 2. Obtener la información del usuario de Roblox
     userinfo_resp = requests.get(
         "https://apis.roblox.com/oauth/v1/userinfo",
         headers={"Authorization": f"Bearer {access_token}"}
@@ -44,9 +67,31 @@ async def roblox_callback(code: str, state: str):
     user_info = userinfo_resp.json()
     roblox_id = user_info.get("sub")
 
-    # Aquí puedes añadir la lógica para guardar en tu base de datos (verification.db) y dar el rol en Discord
+    # 3. Guardar en la base de datos SQLite
+    try:
+        conn = sqlite3.connect("verification.db")
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR REPLACE INTO verified_users (discord_id, roblox_id) VALUES (?, ?)",
+            (int(discord_id), int(roblox_id))
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Error guardando en base de datos:", e)
 
-    # Plantilla HTML con diseño moderno, fondo e imagen
+    # 4. Asignar el rol en Discord automáticamente mediante la API REST
+    if DISCORD_TOKEN and GUILD_ID and VERIFIED_ROLE_ID:
+        role_url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{discord_id}/roles/{VERIFIED_ROLE_ID}"
+        headers = {
+            "Authorization": f"Bot {DISCORD_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        role_resp = requests.put(role_url, headers=headers)
+        if role_resp.status_code not in (200, 204):
+            print("No se pudo asignar el rol en Discord:", role_resp.text)
+
+    # 5. Mostrar la página web de éxito optimizada
     html_content = """
     <!DOCTYPE html>
     <html lang="es">
@@ -116,10 +161,15 @@ async def roblox_callback(code: str, state: str):
         <div class="card">
             <div class="icon">🎉</div>
             <h1>VERIFICATION SUCCESSFUL</h1>
-            <p>Tu cuenta de Roblox se ha vinculado con éxito. Ya puedes volver a Discord para disfrutar del servidor.</p>
+            <p>Tu cuenta de Roblox se ha vinculado con éxito y ya se te ha otorgado el rol en el servidor. ¡Ya puedes volver a Discord!</p>
             <a href="https://discord.com/channels/@me" class="btn">GO BACK TO DISCORD</a>
         </div>
     </body>
     </html>
     """
     return HTMLResponse(content=html_content)
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
