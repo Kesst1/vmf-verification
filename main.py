@@ -164,7 +164,7 @@ async def roblox_callback(code: str, state: str):
     except Exception as e:
         print("Error saving to database:", e)
 
-    # 7. Actualizar el apodo (Nickname) y asignar el rol en Discord simultáneamente
+    # 7. Actualizar el apodo y asignar el rol CONSERVANDO los roles previos del usuario
     if DISCORD_TOKEN and GUILD_ID:
         member_url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{discord_id}"
         headers = {
@@ -172,15 +172,23 @@ async def roblox_callback(code: str, state: str):
             "Content-Type": "application/json"
         }
         
-        # Construir el formato de apodo: discord_user (roblox_user)
-        # Nota: Discord limita los apodos a un máximo de 32 caracteres
+        # Obtener los roles actuales que ya tiene el usuario en el servidor para no borrárselos
+        get_member_resp = requests.get(member_url, headers=headers)
+        current_roles = []
+        if get_member_resp.status_code == 200:
+            current_roles = get_member_resp.json().get("roles", [])
+
+        # Añadir el rol de verificado a la lista actual si no lo tiene ya
+        if VERIFIED_ROLE_ID and VERIFIED_ROLE_ID not in current_roles:
+            current_roles.append(VERIFIED_ROLE_ID)
+
+        # Construir el formato de apodo: discord_user (roblox_user) limitado a 32 caracteres
         new_nickname = f"{discord_username} ({roblox_username})"[:32]
         
         payload_data = {
-            "nick": new_nickname
+            "nick": new_nickname,
+            "roles": current_roles
         }
-        if VERIFIED_ROLE_ID:
-            payload_data["roles"] = [VERIFIED_ROLE_ID]
 
         member_resp = requests.patch(member_url, json=payload_data, headers=headers)
         if member_resp.status_code not in (200, 204):
@@ -224,7 +232,6 @@ async def roblox_callback(code: str, state: str):
             }
             h1 {
                 font-size: 22px;
-                margin-bottom: z;
                 margin-bottom: 15px;
                 letter-spacing: 1px;
                 color: #2ecc71;
@@ -257,7 +264,7 @@ async def roblox_callback(code: str, state: str):
         <div class="card">
             <div class="icon">🎉</div>
             <h1>VERIFICATION SUCCESSFUL</h1>
-            <p>Your account has been verified! Your nickname has been updated and your role has been assigned. You can now return to Discord.</p>
+            <p>Your account has been verified! Your nickname has been updated and your role has been assigned safely without removing your previous roles. You can now return to Discord.</p>
             <a href="https://discord.com/channels/@me" class="btn">GO BACK TO DISCORD</a>
         </div>
     </body>
