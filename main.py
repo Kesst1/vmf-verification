@@ -26,9 +26,10 @@ async def roblox_callback(code: str, state: str):
         "redirect_uri": REDIRECT_URI
     }
 
-    resp = requests.post(token_url, data=payload)
-    if resp.status_code != 200:
-        raise HTTPException(status_code=400, detail="Error al autenticar con Roblox")
+resp = requests.post(token_url, data=payload)
+if resp.status_code != 200:
+    print("RESPUESTA DE ROBLOX:", resp.text)
+    raise HTTPException(status_code=400, detail="Error al autenticar con Roblox")
 
     token_data = resp.json()
     access_token = token_data.get("access_token")
