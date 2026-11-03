@@ -1,10 +1,10 @@
 import os
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 import requests
 
 app = FastAPI()
 
-# CORRECTO: Aquí leemos los nombres de las variables de entorno de Railway
 CLIENT_ID = os.environ.get("ROBLOX_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("ROBLOX_CLIENT_SECRET")
 REDIRECT_URI = os.environ.get("ROBLOX_REDIRECT_URI")
@@ -13,7 +13,7 @@ REDIRECT_URI = os.environ.get("ROBLOX_REDIRECT_URI")
 async def root():
     return {"status": "Servidor de verificación activo"}
 
-@app.get("/callback")
+@app.get("/callback", response_class=HTMLResponse)
 async def roblox_callback(code: str, state: str):
     discord_id = state
 
@@ -26,10 +26,9 @@ async def roblox_callback(code: str, state: str):
         "redirect_uri": REDIRECT_URI
     }
 
-resp = requests.post(token_url, data=payload)
-if resp.status_code != 200:
-    print("RESPUESTA DE ROBLOX:", resp.text)
-    raise HTTPException(status_code=400, detail="Error al autenticar con Roblox")
+    resp = requests.post(token_url, data=payload)
+    if resp.status_code != 200:
+        return HTMLResponse(content="<h3 style='color:white; text-align:center; font-family:sans-serif; margin-top:20vh;'>Error al autenticar con Roblox</h3>", status_code=400)
 
     token_data = resp.json()
     access_token = token_data.get("access_token")
@@ -40,9 +39,87 @@ if resp.status_code != 200:
     )
 
     if userinfo_resp.status_code != 200:
-        raise HTTPException(status_code=400, detail="No se pudo obtener la información del usuario")
+        return HTMLResponse(content="<h3 style='color:white; text-align:center; font-family:sans-serif; margin-top:20vh;'>No se pudo obtener la información del usuario</h3>", status_code=400)
 
     user_info = userinfo_resp.json()
     roblox_id = user_info.get("sub")
 
-    return {"success": True, "roblox_id": roblox_id, "discord_id": discord_id}
+    # Aquí puedes añadir la lógica para guardar en tu base de datos (verification.db) y dar el rol en Discord
+
+    # Plantilla HTML con diseño moderno, fondo e imagen
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Verificación Exitosa - VMF</title>
+        <style>
+            body {
+                margin: 0;
+                padding: 0;
+                height: 100vh;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: linear-gradient(rgba(0,0,0,0.65), rgba(0,0,0,0.65)), url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1920&auto=format&fit=crop') no-repeat center center fixed;
+                background-size: cover;
+                color: white;
+                text-align: center;
+            }
+            .card {
+                background: rgba(18, 18, 20, 0.85);
+                padding: 45px 35px;
+                border-radius: 16px;
+                box-shadow: 0 15px 35px rgba(0,0,0,0.6);
+                max-width: 420px;
+                width: 90%;
+                backdrop-filter: blur(12px);
+                border: 1px solid rgba(255,255,255,0.1);
+            }
+            .icon {
+                font-size: 50px;
+                margin-bottom: 15px;
+            }
+            h1 {
+                font-size: 22px;
+                margin-bottom: 15px;
+                letter-spacing: 1px;
+                color: #2ecc71;
+            }
+            p {
+                color: #b0b0b0;
+                font-size: 14px;
+                margin-bottom: 30px;
+                line-height: 1.5;
+            }
+            .btn {
+                display: inline-block;
+                background-color: #5865F2;
+                color: white;
+                padding: 12px 28px;
+                font-size: 14px;
+                font-weight: bold;
+                text-decoration: none;
+                border-radius: 8px;
+                transition: background 0.3s ease, transform 0.2s ease;
+                box-shadow: 0 4px 15px rgba(88, 101, 242, 0.4);
+            }
+            .btn:hover {
+                background-color: #4752C4;
+                transform: translateY(-2px);
+            }
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <div class="icon">🎉</div>
+            <h1>VERIFICATION SUCCESSFUL</h1>
+            <p>Tu cuenta de Roblox se ha vinculado con éxito. Ya puedes volver a Discord para disfrutar del servidor.</p>
+            <a href="https://discord.com/channels/@me" class="btn">GO BACK TO DISCORD</a>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
