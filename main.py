@@ -23,10 +23,11 @@ MINIMUM_DAYS = 30  # Cambia esto por los días que prefieras
 def init_db():
     conn = sqlite3.connect("verification.db")
     cursor = conn.cursor()
+    # Usamos roblox_id como PRIMARY KEY o UNIQUE estricto para evitar duplicados
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS verified_users (
-            discord_id INTEGER PRIMARY KEY,
-            roblox_id INTEGER UNIQUE
+            discord_id TEXT PRIMARY KEY,
+            roblox_id TEXT UNIQUE
         )
     """)
     conn.commit()
@@ -40,7 +41,7 @@ async def root():
 
 @app.get("/callback", response_class=HTMLResponse)
 async def roblox_callback(code: str, state: str):
-    discord_id = state
+    discord_id = str(state)
 
     # 1. Intercambiar código por token de acceso en Roblox
     token_url = "https://apis.roblox.com/oauth/v1/token"
@@ -69,16 +70,20 @@ async def roblox_callback(code: str, state: str):
         return HTMLResponse(content="<h3 style='color:white; text-align:center; font-family:sans-serif; margin-top:20vh;'>Failed to retrieve user information</h3>", status_code=400)
 
     user_info = userinfo_resp.json()
-    roblox_id = user_info.get("sub")
+    roblox_id = str(user_info.get("sub"))
 
-    # 3. FILTRO 1: Comprobar si la cuenta de Roblox ya está vinculada a OTRO usuario de Discord
+    # 3. FILTRO ESTRICTO: Comprobar si esta cuenta de Roblox ya está enlazada a CUALQUIER otro Discord
     conn = sqlite3.connect("verification.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT discord_id FROM verified_users WHERE roblox_id = ?", (int(roblox_id),))
-    existing_user = cursor.fetchone()
+    cursor.execute("SELECT discord_id FROM verified_users WHERE roblox_id = ?", (roblox_id,))
+    existing_roblox = cursor.fetchone()
+    
+    # Comprobar también si este usuario de Discord ya tiene otra cuenta de Roblox vinculada
+    cursor.execute("SELECT roblox_id FROM verified_users WHERE discord_id = ?", (discord_id,))
+    existing_discord = cursor.fetchone()
     conn.close()
 
-    if existing_user and existing_user[0] != int(discord_id):
+    if (existing_roblox and existing_roblox[0] != discord_id) or existing_discord:
         error_html = """
         <!DOCTYPE html>
         <html lang="en">
@@ -95,14 +100,14 @@ async def roblox_callback(code: str, state: str):
         <body>
             <div class="card">
                 <h1>VERIFICATION FAILED</h1>
-                <p>This Roblox account is already linked to a different Discord account. You cannot use the same Roblox account for multiple users.</p>
+                <p>Either this Roblox account is already linked to another Discord user, or your Discord account is already verified with a different Roblox account.</p>
             </div>
         </body>
         </html>
         """
         return HTMLResponse(content=error_html, status_code=400)
 
-    # 4. Obtener datos públicos de Roblox (Nombre de usuario y fecha de creación para Anti-Alts)
+    # 4. Obtener datos públicos de Roblox (Nombre y fecha de creación para Anti-Alts)
     roblox_username = "RobloxUser"
     roblox_api_resp = requests.get(f"https://users.roblox.com/v1/users/{roblox_id}")
     if roblox_api_resp.status_code == 200:
@@ -141,7 +146,7 @@ async def roblox_callback(code: str, state: str):
                 """
                 return HTMLResponse(content=error_html, status_code=400)
 
-    # 5. Obtener el Display Name (nombre visible) de Discord
+    # 5. Obtener el Display Name exacto de Discord respetando mayúsculas/minúsculas
     discord_display_name = "User"
     if DISCORD_TOKEN:
         disc_user_resp = requests.get(
@@ -150,23 +155,24 @@ async def roblox_callback(code: str, state: str):
         )
         if disc_user_resp.status_code == 200:
             user_data = disc_user_resp.json()
-            # Usa el global_name (Display Name) si lo tiene; si no, recurre al username
+            # Prioriza global_name (que respeta tal cual las mayúsculas del perfil)
             discord_display_name = user_data.get("global_name") or user_data.get("username", "User")
 
-    # 6. Guardar en la base de datos SQLite
+    # 6. Guardar en la base de datos SQLite de forma segura
     try:
         conn = sqlite3.connect("verification.db")
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT OR REPLACE INTO verified_users (discord_id, roblox_id) VALUES (?, ?)",
-            (int(discord_id), int(roblox_id))
+            "INSERT INTO verified_users (discord_id, roblox_id) VALUES (?, ?)",
+            (discord_id, roblox_id)
         )
         conn.commit()
         conn.close()
     except Exception as e:
         print("Error saving to database:", e)
+        return HTMLResponse(content="<h3 style='color:white; text-align:center; font-family:sans-serif; margin-top:20vh;'>Database error or account already linked.</h3>", status_code=400)
 
-    # 7. Actualizar el apodo usando el Display Name y asignar el rol conservando los anteriores
+    # 7. Actualizar el apodo respetando las mayúsculas y asignar el rol conservando los anteriores
     if DISCORD_TOKEN and GUILD_ID:
         member_url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{discord_id}"
         headers = {
@@ -174,17 +180,15 @@ async def roblox_callback(code: str, state: str):
             "Content-Type": "application/json"
         }
         
-        # Obtener los roles actuales para no borrar ninguno (como el de community)
         get_member_resp = requests.get(member_url, headers=headers)
         current_roles = []
         if get_member_resp.status_code == 200:
             current_roles = get_member_resp.json().get("roles", [])
 
-        # Añadir el rol de verificado si no lo tiene
         if VERIFIED_ROLE_ID and VERIFIED_ROLE_ID not in current_roles:
             current_roles.append(VERIFIED_ROLE_ID)
 
-        # Formato de apodo con el Display Name: DisplayName (RobloxUser) limitado a 32 caracteres
+        # Apodo con mayúsculas conservadas (limitado a 32 caracteres por Discord)
         new_nickname = f"{discord_display_name} ({roblox_username})"[:32]
         
         payload_data = {
@@ -266,7 +270,7 @@ async def roblox_callback(code: str, state: str):
         <div class="card">
             <div class="icon">🎉</div>
             <h1>VERIFICATION SUCCESSFUL</h1>
-            <p>Your account has been verified! Your display nickname has been updated, and your roles are safely preserved. You can now return to Discord.</p>
+            <p>Your account has been verified! Your nickname has been updated with your exact profile style and roles are preserved. You can now return to Discord.</p>
             <a href="https://discord.com/channels/@me" class="btn">GO BACK TO DISCORD</a>
         </div>
     </body>
