@@ -1,20 +1,24 @@
 import os
 import sqlite3
+from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 import requests
 
 app = FastAPI()
 
-# Roblox credentials from Railway
+# Credenciales de Roblox desde Railway
 CLIENT_ID = os.environ.get("ROBLOX_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("ROBLOX_CLIENT_SECRET")
 REDIRECT_URI = os.environ.get("ROBLOX_REDIRECT_URI")
 
-# Discord credentials for assigning roles from the web backend
+# Credenciales de Discord para asignar roles desde la web
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 GUILD_ID = os.environ.get("GUILD_ID")
 VERIFIED_ROLE_ID = os.environ.get("VERIFIED_ROLE_ID")
+
+# Configuración del sistema Anti-Alts (Días mínimos de antigüedad)
+MINIMUM_DAYS = 30  # Puedes cambiar este número por los días que prefieras
 
 def init_db():
     conn = sqlite3.connect("verification.db")
@@ -38,7 +42,7 @@ async def root():
 async def roblox_callback(code: str, state: str):
     discord_id = state
 
-    # 1. Exchange authorization code for access token in Roblox
+    # 1. Intercambiar código por token de acceso en Roblox
     token_url = "https://apis.roblox.com/oauth/v1/token"
     payload = {
         "client_id": CLIENT_ID,
@@ -55,7 +59,7 @@ async def roblox_callback(code: str, state: str):
     token_data = resp.json()
     access_token = token_data.get("access_token")
 
-    # 2. Retrieve Roblox user info
+    # 2. Obtener la información básica del usuario de Roblox
     userinfo_resp = requests.get(
         "https://apis.roblox.com/oauth/v1/userinfo",
         headers={"Authorization": f"Bearer {access_token}"}
@@ -67,7 +71,45 @@ async def roblox_callback(code: str, state: str):
     user_info = userinfo_resp.json()
     roblox_id = user_info.get("sub")
 
-    # 3. Save into the SQLite database
+    # 3. FILTRO ANTI-ALTS: Comprobar la fecha de creación de la cuenta de Roblox
+    roblox_api_resp = requests.get(f"https://users.roblox.com/v1/users/{roblox_id}")
+    if roblox_api_resp.status_code == 200:
+        roblox_data = roblox_api_resp.json()
+        created_at_str = roblox_data.get("created")
+        
+        if created_at_str:
+            # Parsear la fecha de creación que devuelve Roblox
+            clean_date_str = created_at_str.split(".")[0] + "Z" if "." in created_at_str else created_at_str
+            created_at = datetime.strptime(clean_date_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            account_age_days = (now - created_at).days
+
+            # Si la cuenta es más nueva de lo permitido, se rechaza la verificación
+            if account_age_days < MINIMUM_DAYS:
+                error_html = f"""
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <title>Verification Denied</title>
+                    <style>
+                        body {{ margin: 0; padding: 0; height: 100vh; display: flex; justify-content: center; align-items: center; font-family: 'Segoe UI', sans-serif; background: #121214; color: white; text-align: center; }}
+                        .card {{ background: rgba(255,255,255,0.05); padding: 40px; border-radius: 16px; max-width: 400px; border: 1px solid rgba(255,255,255,0.1); }}
+                        h1 {{ color: #e74c3c; font-size: 20px; margin-bottom: 15px; }}
+                        p {{ color: #b0b0b0; font-size: 14px; line-height: 1.5; }}
+                    </style>
+                </head>
+                <body>
+                    <div class="card">
+                        <h1>VERIFICATION FAILED</h1>
+                        <p>Your Roblox account is too new to be verified. It must be at least <b>{MINIMUM_DAYS} days old</b> (Current age: {account_age_days} days).</p>
+                    </div>
+                </body>
+                </html>
+                """
+                return HTMLResponse(content=error_html, status_code=400)
+
+    # 4. Guardar en la base de datos SQLite
     try:
         conn = sqlite3.connect("verification.db")
         cursor = conn.cursor()
@@ -80,7 +122,7 @@ async def roblox_callback(code: str, state: str):
     except Exception as e:
         print("Error saving to database:", e)
 
-    # 4. Assign the role in Discord automatically via REST API
+    # 5. Asignar el rol en Discord automáticamente mediante la API REST
     if DISCORD_TOKEN and GUILD_ID and VERIFIED_ROLE_ID:
         role_url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{discord_id}/roles/{VERIFIED_ROLE_ID}"
         headers = {
@@ -91,7 +133,7 @@ async def roblox_callback(code: str, state: str):
         if role_resp.status_code not in (200, 204):
             print("Failed to assign role in Discord:", role_resp.text)
 
-    # 5. Display the optimized success web page
+    # 6. Mostrar la página web de éxito optimizada
     html_content = """
     <!DOCTYPE html>
     <html lang="en">
