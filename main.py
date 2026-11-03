@@ -6,7 +6,7 @@ app = FastAPI()
 
 CLIENT_ID = os.environ.get("4819315780864944102")
 CLIENT_SECRET = os.environ.get("RBX-q_Q2yimMREqZ2NXBR1ES8wanwE6EFaAemWdrWcdNyUxWqZrp5PckjFc3czVkCflf")
-REDIRECT_URI = os.environ.get("https://vmf-verification.onrender.com/callback")
+REDIRECT_URI = os.environ.get("https://vmf-verification-production.up.railway.app/callback")
 
 @app.get("/")
 async def root():
