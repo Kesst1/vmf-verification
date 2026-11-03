@@ -141,15 +141,17 @@ async def roblox_callback(code: str, state: str):
                 """
                 return HTMLResponse(content=error_html, status_code=400)
 
-    # 5. Obtener el nombre de usuario de Discord actual
-    discord_username = "User"
+    # 5. Obtener el Display Name (nombre visible) de Discord
+    discord_display_name = "User"
     if DISCORD_TOKEN:
         disc_user_resp = requests.get(
             f"https://discord.com/api/v10/users/{discord_id}",
             headers={"Authorization": f"Bot {DISCORD_TOKEN}"}
         )
         if disc_user_resp.status_code == 200:
-            discord_username = disc_user_resp.json().get("username", "User")
+            user_data = disc_user_resp.json()
+            # Usa el global_name (Display Name) si lo tiene; si no, recurre al username
+            discord_display_name = user_data.get("global_name") or user_data.get("username", "User")
 
     # 6. Guardar en la base de datos SQLite
     try:
@@ -164,7 +166,7 @@ async def roblox_callback(code: str, state: str):
     except Exception as e:
         print("Error saving to database:", e)
 
-    # 7. Actualizar el apodo y asignar el rol CONSERVANDO los roles previos del usuario
+    # 7. Actualizar el apodo usando el Display Name y asignar el rol conservando los anteriores
     if DISCORD_TOKEN and GUILD_ID:
         member_url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{discord_id}"
         headers = {
@@ -172,18 +174,18 @@ async def roblox_callback(code: str, state: str):
             "Content-Type": "application/json"
         }
         
-        # Obtener los roles actuales que ya tiene el usuario en el servidor para no borrárselos
+        # Obtener los roles actuales para no borrar ninguno (como el de community)
         get_member_resp = requests.get(member_url, headers=headers)
         current_roles = []
         if get_member_resp.status_code == 200:
             current_roles = get_member_resp.json().get("roles", [])
 
-        # Añadir el rol de verificado a la lista actual si no lo tiene ya
+        # Añadir el rol de verificado si no lo tiene
         if VERIFIED_ROLE_ID and VERIFIED_ROLE_ID not in current_roles:
             current_roles.append(VERIFIED_ROLE_ID)
 
-        # Construir el formato de apodo: discord_user (roblox_user) limitado a 32 caracteres
-        new_nickname = f"{discord_username} ({roblox_username})"[:32]
+        # Formato de apodo con el Display Name: DisplayName (RobloxUser) limitado a 32 caracteres
+        new_nickname = f"{discord_display_name} ({roblox_username})"[:32]
         
         payload_data = {
             "nick": new_nickname,
@@ -264,7 +266,7 @@ async def roblox_callback(code: str, state: str):
         <div class="card">
             <div class="icon">🎉</div>
             <h1>VERIFICATION SUCCESSFUL</h1>
-            <p>Your account has been verified! Your nickname has been updated and your role has been assigned safely without removing your previous roles. You can now return to Discord.</p>
+            <p>Your account has been verified! Your display nickname has been updated, and your roles are safely preserved. You can now return to Discord.</p>
             <a href="https://discord.com/channels/@me" class="btn">GO BACK TO DISCORD</a>
         </div>
     </body>
