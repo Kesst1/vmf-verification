@@ -12,13 +12,13 @@ CLIENT_ID = os.environ.get("ROBLOX_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("ROBLOX_CLIENT_SECRET")
 REDIRECT_URI = os.environ.get("ROBLOX_REDIRECT_URI")
 
-# Credenciales de Discord para asignar roles desde la web
+# Credenciales de Discord para gestionar miembros desde la web
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 GUILD_ID = os.environ.get("GUILD_ID")
 VERIFIED_ROLE_ID = os.environ.get("VERIFIED_ROLE_ID")
 
 # Configuración del sistema Anti-Alts (Días mínimos de antigüedad)
-MINIMUM_DAYS = 30  # Puedes cambiar este número por los días que prefieras
+MINIMUM_DAYS = 30  # Cambia esto por los días que prefieras
 
 def init_db():
     conn = sqlite3.connect("verification.db")
@@ -59,7 +59,7 @@ async def roblox_callback(code: str, state: str):
     token_data = resp.json()
     access_token = token_data.get("access_token")
 
-    # 2. Obtener la información básica del usuario de Roblox
+    # 2. Obtener la información básica del usuario de Roblox (OAuth)
     userinfo_resp = requests.get(
         "https://apis.roblox.com/oauth/v1/userinfo",
         headers={"Authorization": f"Bearer {access_token}"}
@@ -71,20 +71,52 @@ async def roblox_callback(code: str, state: str):
     user_info = userinfo_resp.json()
     roblox_id = user_info.get("sub")
 
-    # 3. FILTRO ANTI-ALTS: Comprobar la fecha de creación de la cuenta de Roblox
+    # 3. FILTRO 1: Comprobar si la cuenta de Roblox ya está vinculada a OTRO usuario de Discord
+    conn = sqlite3.connect("verification.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT discord_id FROM verified_users WHERE roblox_id = ?", (int(roblox_id),))
+    existing_user = cursor.fetchone()
+    conn.close()
+
+    if existing_user and existing_user[0] != int(discord_id):
+        error_html = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <title>Verification Denied</title>
+            <style>
+                body { margin: 0; padding: 0; height: 100vh; display: flex; justify-content: center; align-items: center; font-family: 'Segoe UI', sans-serif; background: #121214; color: white; text-align: center; }
+                .card { background: rgba(255,255,255,0.05); padding: 40px; border-radius: 16px; max-width: 400px; border: 1px solid rgba(255,255,255,0.1); }
+                h1 { color: #e74c3c; font-size: 20px; margin-bottom: 15px; }
+                p { color: #b0b0b0; font-size: 14px; line-height: 1.5; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h1>VERIFICATION FAILED</h1>
+                <p>This Roblox account is already linked to a different Discord account. You cannot use the same Roblox account for multiple users.</p>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=error_html, status_code=400)
+
+    # 4. Obtener datos públicos de Roblox (Nombre de usuario y fecha de creación para Anti-Alts)
+    roblox_username = "RobloxUser"
     roblox_api_resp = requests.get(f"https://users.roblox.com/v1/users/{roblox_id}")
     if roblox_api_resp.status_code == 200:
         roblox_data = roblox_api_resp.json()
+        roblox_username = roblox_data.get("name", "RobloxUser")
         created_at_str = roblox_data.get("created")
         
         if created_at_str:
-            # Parsear la fecha de creación que devuelve Roblox
             clean_date_str = created_at_str.split(".")[0] + "Z" if "." in created_at_str else created_at_str
             created_at = datetime.strptime(clean_date_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
             now = datetime.now(timezone.utc)
             account_age_days = (now - created_at).days
 
-            # Si la cuenta es más nueva de lo permitido, se rechaza la verificación
+            # Filtro Anti-Alts por antigüedad
             if account_age_days < MINIMUM_DAYS:
                 error_html = f"""
                 <!DOCTYPE html>
@@ -109,7 +141,17 @@ async def roblox_callback(code: str, state: str):
                 """
                 return HTMLResponse(content=error_html, status_code=400)
 
-    # 4. Guardar en la base de datos SQLite
+    # 5. Obtener el nombre de usuario de Discord actual
+    discord_username = "User"
+    if DISCORD_TOKEN:
+        disc_user_resp = requests.get(
+            f"https://discord.com/api/v10/users/{discord_id}",
+            headers={"Authorization": f"Bot {DISCORD_TOKEN}"}
+        )
+        if disc_user_resp.status_code == 200:
+            discord_username = disc_user_resp.json().get("username", "User")
+
+    # 6. Guardar en la base de datos SQLite
     try:
         conn = sqlite3.connect("verification.db")
         cursor = conn.cursor()
@@ -122,18 +164,29 @@ async def roblox_callback(code: str, state: str):
     except Exception as e:
         print("Error saving to database:", e)
 
-    # 5. Asignar el rol en Discord automáticamente mediante la API REST
-    if DISCORD_TOKEN and GUILD_ID and VERIFIED_ROLE_ID:
-        role_url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{discord_id}/roles/{VERIFIED_ROLE_ID}"
+    # 7. Actualizar el apodo (Nickname) y asignar el rol en Discord simultáneamente
+    if DISCORD_TOKEN and GUILD_ID:
+        member_url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{discord_id}"
         headers = {
             "Authorization": f"Bot {DISCORD_TOKEN}",
             "Content-Type": "application/json"
         }
-        role_resp = requests.put(role_url, headers=headers)
-        if role_resp.status_code not in (200, 204):
-            print("Failed to assign role in Discord:", role_resp.text)
+        
+        # Construir el formato de apodo: discord_user (roblox_user)
+        # Nota: Discord limita los apodos a un máximo de 32 caracteres
+        new_nickname = f"{discord_username} ({roblox_username})"[:32]
+        
+        payload_data = {
+            "nick": new_nickname
+        }
+        if VERIFIED_ROLE_ID:
+            payload_data["roles"] = [VERIFIED_ROLE_ID]
 
-    # 6. Mostrar la página web de éxito optimizada
+        member_resp = requests.patch(member_url, json=payload_data, headers=headers)
+        if member_resp.status_code not in (200, 204):
+            print("Failed to update nickname or assign role in Discord:", member_resp.text)
+
+    # 8. Mostrar la página web de éxito optimizada
     html_content = """
     <!DOCTYPE html>
     <html lang="en">
@@ -171,6 +224,7 @@ async def roblox_callback(code: str, state: str):
             }
             h1 {
                 font-size: 22px;
+                margin-bottom: z;
                 margin-bottom: 15px;
                 letter-spacing: 1px;
                 color: #2ecc71;
@@ -203,7 +257,7 @@ async def roblox_callback(code: str, state: str):
         <div class="card">
             <div class="icon">🎉</div>
             <h1>VERIFICATION SUCCESSFUL</h1>
-            <p>Your Roblox account has been successfully linked and the role has been granted in the server. You can now return to Discord!</p>
+            <p>Your account has been verified! Your nickname has been updated and your role has been assigned. You can now return to Discord.</p>
             <a href="https://discord.com/channels/@me" class="btn">GO BACK TO DISCORD</a>
         </div>
     </body>
