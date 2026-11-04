@@ -16,6 +16,10 @@ DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 GUILD_ID = os.environ.get("GUILD_ID")
 VERIFIED_ROLE_ID = os.environ.get("VERIFIED_ROLE_ID")
 
+# Credenciales de Roblox Open Cloud para el DataStore
+ROBLOX_UNIVERSE_ID = os.environ.get("ROBLOX_UNIVERSE_ID")
+ROBLOX_API_KEY = os.environ.get("ROBLOX_API_KEY")
+
 # Enlaces personalizados y configurados
 DISCORD_SERVER_INVITE = os.environ.get("DISCORD_SERVER_INVITE", "https://discord.com/channels/1457406867960762583/1457406868589645826")
 ROBLOX_GROUP_URL = os.environ.get("ROBLOX_GROUP_URL", "https://www.roblox.com/communities/11989341/VMF-VIRTUAL-MODIFIED-FOOTBALL#!/about")
@@ -38,6 +42,37 @@ def init_db():
 
 init_db()
 
+# --- FUNCIONES DE ROBLOX DATASTORE (OPEN CLOUD) ---
+def mark_roblox_verified(roblox_id: str, discord_id: str):
+    if not ROBLOX_UNIVERSE_ID or not ROBLOX_API_KEY:
+        return
+    url = f"https://apis.roblox.com/datastores/v1/universes/{ROBLOX_UNIVERSE_ID}/standard-datastores/datastore/entries/entry?datastoreName=DiscordVerified&entryKey={roblox_id}"
+    headers = {
+        "x-api-key": ROBLOX_API_KEY,
+        "content-type": "application/json"
+    }
+    body = {
+        "discordId": str(discord_id),
+        "verifiedAt": int(datetime.now(timezone.utc).timestamp() * 1000)
+    }
+    try:
+        requests.post(url, headers=headers, json=body)
+    except Exception as e:
+        print("Error updating Roblox DataStore (mark):", e)
+
+def unmark_roblox_verified(roblox_id: str):
+    if not ROBLOX_UNIVERSE_ID or not ROBLOX_API_KEY:
+        return
+    url = f"https://apis.roblox.com/datastores/v1/universes/{ROBLOX_UNIVERSE_ID}/standard-datastores/datastore/entries/entry?datastoreName=DiscordVerified&entryKey={roblox_id}"
+    headers = {
+        "x-api-key": ROBLOX_API_KEY
+    }
+    try:
+        requests.delete(url, headers=headers)
+    except Exception as e:
+        print("Error updating Roblox DataStore (unmark):", e)
+# -------------------------------------------------
+
 @app.get("/")
 async def root():
     return {"status": "Verification server active"}
@@ -50,12 +85,19 @@ async def admin_unlink(discord_id: str = Query(...), x_admin_key: str = Header(N
     
     conn = sqlite3.connect("verification.db")
     cursor = conn.cursor()
+    
+    # Obtener el roblox_id antes de borrar para quitarlo del DataStore del juego
+    cursor.execute("SELECT roblox_id FROM verified_users WHERE discord_id = ?", (discord_id,))
+    row = cursor.fetchone()
+    
     cursor.execute("DELETE FROM verified_users WHERE discord_id = ?", (discord_id,))
     conn.commit()
     rows_deleted = cursor.rowcount
     conn.close()
 
     if rows_deleted > 0:
+        if row and row[0]:
+            unmark_roblox_verified(row[0])
         return {"success": True, "message": f"Discord user {discord_id} unlinked successfully."}
     else:
         raise HTTPException(status_code=404, detail="User not found in verification database.")
@@ -180,7 +222,7 @@ async def roblox_callback(code: str, state: str):
                 """
                 return HTMLResponse(content=error_html, status_code=400)
 
-    # Obtener el Display Name de Discord (respetando mayúsculas)
+    # Obtener el Display Name de Discord
     discord_display_name = "User"
     if DISCORD_TOKEN:
         disc_user_resp = requests.get(
@@ -191,7 +233,7 @@ async def roblox_callback(code: str, state: str):
             user_data = disc_user_resp.json()
             discord_display_name = user_data.get("global_name") or user_data.get("username", "User")
 
-    # Guardar en base de datos
+    # Guardar en base de datos local (SQLite)
     try:
         conn = sqlite3.connect("verification.db")
         cursor = conn.cursor()
@@ -205,7 +247,10 @@ async def roblox_callback(code: str, state: str):
         print("Error saving to database:", e)
         return HTMLResponse(content="<h3 style='color:white; text-align:center; font-family:sans-serif; margin-top:20vh;'>Database error or account already linked.</h3>", status_code=400)
 
-    # Asignar rol y cambiar apodo conservando los roles anteriores
+    # REGISTRAR EN EL DATASTORE DE ROBLOX (Para que el juego lo deje entrar)
+    mark_roblox_verified(roblox_id, discord_id)
+
+    # Asignar rol y cambiar apodo en Discord
     if DISCORD_TOKEN and GUILD_ID:
         member_url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{discord_id}"
         headers = {
@@ -230,7 +275,7 @@ async def roblox_callback(code: str, state: str):
 
         requests.patch(member_url, json=payload_data, headers=headers)
 
-    # Página web de éxito con la nueva imagen y tus enlaces
+    # Página web de éxito
     html_content = f"""
     <!DOCTYPE html>
     <html lang="en">
