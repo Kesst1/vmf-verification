@@ -17,9 +17,9 @@ GUILD_ID = os.environ.get("GUILD_ID")
 VERIFIED_ROLE_ID = os.environ.get("VERIFIED_ROLE_ID")
 
 # Enlaces personalizados para la web y clave de administración
-DISCORD_SERVER_INVITE = os.environ.get("DISCORD_SERVER_INVITE", "https://discord.com/channels/1457406867960762583/1457406868589645826")
-ROBLOX_GROUP_URL = os.environ.get("ROBLOX_GROUP_URL", "https://www.roblox.com/communities/11989341/VMF-VIRTUAL-MODIFIED-FOOTBALL#!/about")
-BACKGROUND_IMAGE_URL = os.environ.get("BACKGROUND_IMAGE_URL", "https://i.ibb.co/tTrHvzD9/LOL-VMF.png")
+DISCORD_SERVER_INVITE = os.environ.get("DISCORD_SERVER_INVITE", "https://discord.com/channels/@me")
+ROBLOX_GROUP_URL = os.environ.get("ROBLOX_GROUP_URL", "https://www.roblox.com")
+BACKGROUND_IMAGE_URL = os.environ.get("BACKGROUND_IMAGE_URL", "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1920&auto=format&fit=crop")
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "secreto_por_defecto")
 
 MINIMUM_DAYS = 60  # Antigüedad mínima anti-alts
@@ -163,7 +163,7 @@ async def roblox_callback(code: str, state: str):
                 """
                 return HTMLResponse(content=error_html, status_code=400)
 
-    # Obtener nombre de Discord
+    # Obtener el Display Name de Discord (respetando mayúsculas)
     discord_display_name = "User"
     if DISCORD_TOKEN:
         disc_user_resp = requests.get(
@@ -188,7 +188,7 @@ async def roblox_callback(code: str, state: str):
         print("Error saving to database:", e)
         return HTMLResponse(content="<h3 style='color:white; text-align:center; font-family:sans-serif; margin-top:20vh;'>Database error or account already linked.</h3>", status_code=400)
 
-    # Asignar rol y cambiar apodo conservando los anteriores
+    # Asignar rol y cambiar apodo conservando los roles anteriores
     if DISCORD_TOKEN and GUILD_ID:
         member_url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{discord_id}"
         headers = {
@@ -213,7 +213,7 @@ async def roblox_callback(code: str, state: str):
 
         requests.patch(member_url, json=payload_data, headers=headers)
 
-    # Página web de éxito con los dos botones y fondo personalizable
+    # Página web de éxito con imagen ajustada (contain) y botones funcionales
     html_content = f"""
     <!DOCTYPE html>
     <html lang="en">
@@ -231,7 +231,8 @@ async def roblox_callback(code: str, state: str):
                 align-items: center;
                 font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
                 background: linear-gradient(rgba(0,0,0,0.65), rgba(0,0,0,0.65)), url('{BACKGROUND_IMAGE_URL}') no-repeat center center fixed;
-                background-size: cover;
+                background-size: contain;
+                background-color: #121214;
                 color: white;
                 text-align: center;
             }}
