@@ -1,29 +1,32 @@
 import os
 import sqlite3
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Query
 from fastapi.responses import HTMLResponse
 import requests
 
 app = FastAPI()
 
-# Credenciales de Roblox desde Railway
+# Credenciales desde Railway
 CLIENT_ID = os.environ.get("ROBLOX_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("ROBLOX_CLIENT_SECRET")
 REDIRECT_URI = os.environ.get("ROBLOX_REDIRECT_URI")
 
-# Credenciales de Discord para gestionar miembros desde la web
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 GUILD_ID = os.environ.get("GUILD_ID")
 VERIFIED_ROLE_ID = os.environ.get("VERIFIED_ROLE_ID")
 
-# Configuración del sistema Anti-Alts (Días mínimos de antigüedad)
-MINIMUM_DAYS = 30  # Cambia esto por los días que prefieras
+# Enlaces personalizados para la web y clave de administración
+DISCORD_SERVER_INVITE = os.environ.get("DISCORD_SERVER_INVITE", "https://discord.com/channels/1457406867960762583/1457406868589645826")
+ROBLOX_GROUP_URL = os.environ.get("ROBLOX_GROUP_URL", "https://www.roblox.com/communities/11989341/VMF-VIRTUAL-MODIFIED-FOOTBALL#!/about")
+BACKGROUND_IMAGE_URL = os.environ.get("BACKGROUND_IMAGE_URL", "https://i.ibb.co/tTrHvzD9/LOL-VMF.png")
+ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "secreto_por_defecto")
+
+MINIMUM_DAYS = 60  # Antigüedad mínima anti-alts
 
 def init_db():
     conn = sqlite3.connect("verification.db")
     cursor = conn.cursor()
-    # Usamos roblox_id como PRIMARY KEY o UNIQUE estricto para evitar duplicados
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS verified_users (
             discord_id TEXT PRIMARY KEY,
@@ -39,11 +42,28 @@ init_db()
 async def root():
     return {"status": "Verification server active"}
 
+@app.post("/admin/unlink")
+async def admin_unlink(discord_id: str = Query(...), x_admin_key: str = Header(None)):
+    """Endpoint seguro para que el bot pueda desvincular a un usuario si se le banea o se permite cambiar"""
+    if x_admin_key != ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    
+    conn = sqlite3.connect("verification.db")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM verified_users WHERE discord_id = ?", (discord_id,))
+    conn.commit()
+    rows_deleted = cursor.rowcount
+    conn.close()
+
+    if rows_deleted > 0:
+        return {"success": True, "message": f"Discord user {discord_id} unlinked successfully."}
+    else:
+        raise HTTPException(status_code=404, detail="User not found in verification database.")
+
 @app.get("/callback", response_class=HTMLResponse)
 async def roblox_callback(code: str, state: str):
     discord_id = str(state)
 
-    # 1. Intercambiar código por token de acceso en Roblox
     token_url = "https://apis.roblox.com/oauth/v1/token"
     payload = {
         "client_id": CLIENT_ID,
@@ -60,7 +80,6 @@ async def roblox_callback(code: str, state: str):
     token_data = resp.json()
     access_token = token_data.get("access_token")
 
-    # 2. Obtener la información básica del usuario de Roblox (OAuth)
     userinfo_resp = requests.get(
         "https://apis.roblox.com/oauth/v1/userinfo",
         headers={"Authorization": f"Bearer {access_token}"}
@@ -72,13 +91,12 @@ async def roblox_callback(code: str, state: str):
     user_info = userinfo_resp.json()
     roblox_id = str(user_info.get("sub"))
 
-    # 3. FILTRO ESTRICTO: Comprobar si esta cuenta de Roblox ya está enlazada a CUALQUIER otro Discord
+    # Comprobar restricciones de duplicados
     conn = sqlite3.connect("verification.db")
     cursor = conn.cursor()
     cursor.execute("SELECT discord_id FROM verified_users WHERE roblox_id = ?", (roblox_id,))
     existing_roblox = cursor.fetchone()
     
-    # Comprobar también si este usuario de Discord ya tiene otra cuenta de Roblox vinculada
     cursor.execute("SELECT roblox_id FROM verified_users WHERE discord_id = ?", (discord_id,))
     existing_discord = cursor.fetchone()
     conn.close()
@@ -100,14 +118,14 @@ async def roblox_callback(code: str, state: str):
         <body>
             <div class="card">
                 <h1>VERIFICATION FAILED</h1>
-                <p>Either this Roblox account is already linked to another Discord user, or your Discord account is already verified with a different Roblox account.</p>
+                <p>This Roblox account is already linked to another Discord user, or your Discord account is already verified.</p>
             </div>
         </body>
         </html>
         """
         return HTMLResponse(content=error_html, status_code=400)
 
-    # 4. Obtener datos públicos de Roblox (Nombre y fecha de creación para Anti-Alts)
+    # Filtro Anti-Alts por antigüedad
     roblox_username = "RobloxUser"
     roblox_api_resp = requests.get(f"https://users.roblox.com/v1/users/{roblox_id}")
     if roblox_api_resp.status_code == 200:
@@ -121,7 +139,6 @@ async def roblox_callback(code: str, state: str):
             now = datetime.now(timezone.utc)
             account_age_days = (now - created_at).days
 
-            # Filtro Anti-Alts por antigüedad
             if account_age_days < MINIMUM_DAYS:
                 error_html = f"""
                 <!DOCTYPE html>
@@ -139,14 +156,14 @@ async def roblox_callback(code: str, state: str):
                 <body>
                     <div class="card">
                         <h1>VERIFICATION FAILED</h1>
-                        <p>Your Roblox account is too new to be verified. It must be at least <b>{MINIMUM_DAYS} days old</b> (Current age: {account_age_days} days).</p>
+                        <p>Your Roblox account is too new. It must be at least <b>{MINIMUM_DAYS} days old</b> (Current age: {account_age_days} days).</p>
                     </div>
                 </body>
                 </html>
                 """
                 return HTMLResponse(content=error_html, status_code=400)
 
-    # 5. Obtener el Display Name exacto de Discord respetando mayúsculas/minúsculas
+    # Obtener nombre de Discord
     discord_display_name = "User"
     if DISCORD_TOKEN:
         disc_user_resp = requests.get(
@@ -155,10 +172,9 @@ async def roblox_callback(code: str, state: str):
         )
         if disc_user_resp.status_code == 200:
             user_data = disc_user_resp.json()
-            # Prioriza global_name (que respeta tal cual las mayúsculas del perfil)
             discord_display_name = user_data.get("global_name") or user_data.get("username", "User")
 
-    # 6. Guardar en la base de datos SQLite de forma segura
+    # Guardar en base de datos
     try:
         conn = sqlite3.connect("verification.db")
         cursor = conn.cursor()
@@ -172,7 +188,7 @@ async def roblox_callback(code: str, state: str):
         print("Error saving to database:", e)
         return HTMLResponse(content="<h3 style='color:white; text-align:center; font-family:sans-serif; margin-top:20vh;'>Database error or account already linked.</h3>", status_code=400)
 
-    # 7. Actualizar el apodo respetando las mayúsculas y asignar el rol conservando los anteriores
+    # Asignar rol y cambiar apodo conservando los anteriores
     if DISCORD_TOKEN and GUILD_ID:
         member_url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{discord_id}"
         headers = {
@@ -188,7 +204,6 @@ async def roblox_callback(code: str, state: str):
         if VERIFIED_ROLE_ID and VERIFIED_ROLE_ID not in current_roles:
             current_roles.append(VERIFIED_ROLE_ID)
 
-        # Apodo con mayúsculas conservadas (limitado a 32 caracteres por Discord)
         new_nickname = f"{discord_display_name} ({roblox_username})"[:32]
         
         payload_data = {
@@ -196,12 +211,10 @@ async def roblox_callback(code: str, state: str):
             "roles": current_roles
         }
 
-        member_resp = requests.patch(member_url, json=payload_data, headers=headers)
-        if member_resp.status_code not in (200, 204):
-            print("Failed to update nickname or assign role in Discord:", member_resp.text)
+        requests.patch(member_url, json=payload_data, headers=headers)
 
-    # 8. Mostrar la página web de éxito optimizada
-    html_content = """
+    # Página web de éxito con los dos botones y fondo personalizable
+    html_content = f"""
     <!DOCTYPE html>
     <html lang="en">
     <head>
@@ -209,7 +222,7 @@ async def roblox_callback(code: str, state: str):
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Successful Verification - VMF</title>
         <style>
-            body {
+            body {{
                 margin: 0;
                 padding: 0;
                 height: 100vh;
@@ -217,12 +230,12 @@ async def roblox_callback(code: str, state: str):
                 justify-content: center;
                 align-items: center;
                 font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                background: linear-gradient(rgba(0,0,0,0.65), rgba(0,0,0,0.65)), url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1920&auto=format&fit=crop') no-repeat center center fixed;
+                background: linear-gradient(rgba(0,0,0,0.65), rgba(0,0,0,0.65)), url('{BACKGROUND_IMAGE_URL}') no-repeat center center fixed;
                 background-size: cover;
                 color: white;
                 text-align: center;
-            }
-            .card {
+            }}
+            .card {{
                 background: rgba(18, 18, 20, 0.85);
                 padding: 45px 35px;
                 border-radius: 16px;
@@ -231,47 +244,62 @@ async def roblox_callback(code: str, state: str):
                 width: 90%;
                 backdrop-filter: blur(12px);
                 border: 1px solid rgba(255,255,255,0.1);
-            }
-            .icon {
+            }}
+            .icon {{
                 font-size: 50px;
                 margin-bottom: 15px;
-            }
-            h1 {
+            }}
+            h1 {{
                 font-size: 22px;
                 margin-bottom: 15px;
                 letter-spacing: 1px;
                 color: #2ecc71;
-            }
-            p {
+            }}
+            p {{
                 color: #b0b0b0;
                 font-size: 14px;
                 margin-bottom: 30px;
                 line-height: 1.5;
-            }
-            .btn {
+            }}
+            .btn-container {{
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+            }}
+            .btn {{
                 display: inline-block;
                 background-color: #5865F2;
                 color: white;
-                padding: 12px 28px;
+                padding: 12px 20px;
                 font-size: 14px;
                 font-weight: bold;
                 text-decoration: none;
                 border-radius: 8px;
                 transition: background 0.3s ease, transform 0.2s ease;
                 box-shadow: 0 4px 15px rgba(88, 101, 242, 0.4);
-            }
-            .btn:hover {
+            }}
+            .btn:hover {{
                 background-color: #4752C4;
                 transform: translateY(-2px);
-            }
+            }}
+            .btn-roblox {{
+                background-color: #e74c3c;
+                box-shadow: 0 4px 15px rgba(231, 76, 60, 0.4);
+            }}
+            .btn-roblox:hover {{
+                background-color: #c0392b;
+            }}
         </style>
     </head>
     <body>
         <div class="card">
             <div class="icon">🎉</div>
             <h1>VERIFICATION SUCCESSFUL</h1>
-            <p>Your account has been verified! Your nickname has been updated with your exact profile style and roles are preserved. You can now return to Discord.</p>
-            <a href="https://discord.com/channels/@me" class="btn">GO BACK TO DISCORD</a>
+            <p>Your account has been verified! Your nickname has been updated and your roles are preserved. You can now return to Discord or join our Roblox group.</p>
+            <div class="btn-container">
+                <a href="{DISCORD_SERVER_INVITE}" class="btn">BACK TO DISCORD SERVER</a>
+                <a href="{ROBLOX_GROUP_URL}" class="btn btn-roblox" target="_blank">ROBLOX GROUP</a>
+            </div>
         </div>
     </body>
     </html>
