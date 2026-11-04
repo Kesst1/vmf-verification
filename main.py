@@ -16,10 +16,10 @@ DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 GUILD_ID = os.environ.get("GUILD_ID")
 VERIFIED_ROLE_ID = os.environ.get("VERIFIED_ROLE_ID")
 
-# Enlaces personalizados para la web y clave de administración
-DISCORD_SERVER_INVITE = os.environ.get("DISCORD_SERVER_INVITE", "https://discord.com/channels/@me")
-ROBLOX_GROUP_URL = os.environ.get("ROBLOX_GROUP_URL", "https://www.roblox.com")
-BACKGROUND_IMAGE_URL = os.environ.get("BACKGROUND_IMAGE_URL", "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1920&auto=format&fit=crop")
+# Enlaces personalizados y configurados exactamente como pediste
+DISCORD_SERVER_INVITE = os.environ.get("DISCORD_SERVER_INVITE", "https://discord.com/channels/1457406867960762583/1457406868589645826")
+ROBLOX_GROUP_URL = os.environ.get("ROBLOX_GROUP_URL", "https://www.roblox.com/communities/11989341/VMF-VIRTUAL-MODIFIED-FOOTBALL#!/about")
+BACKGROUND_IMAGE_URL = os.environ.get("BACKGROUND_IMAGE_URL", "https://i.ibb.co/xtT2BY6N/LOL-VMF.png")
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "secreto_por_defecto")
 
 MINIMUM_DAYS = 60  # Antigüedad mínima anti-alts
@@ -213,7 +213,7 @@ async def roblox_callback(code: str, state: str):
 
         requests.patch(member_url, json=payload_data, headers=headers)
 
-    # Página web de éxito con imagen ajustada al 100% para que no se corte
+    # Página web de éxito con la nueva imagen y tus enlaces exactos
     html_content = f"""
     <!DOCTYPE html>
     <html lang="en">
@@ -298,7 +298,7 @@ async def roblox_callback(code: str, state: str):
             <h1>VERIFICATION SUCCESSFUL</h1>
             <p>Your account has been verified! Your nickname has been updated and your roles are preserved. You can now return to Discord or join our Roblox group.</p>
             <div class="btn-container">
-                <a href="{DISCORD_SERVER_INVITE}" class="btn">BACK TO DISCORD SERVER</a>
+                <a href="{DISCORD_SERVER_INVITE}" class="btn">BACK TO DISCORD CHANNEL</a>
                 <a href="{ROBLOX_GROUP_URL}" class="btn btn-roblox" target="_blank">ROBLOX GROUP</a>
             </div>
         </div>
