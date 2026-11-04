@@ -45,7 +45,9 @@ init_db()
 # --- FUNCIONES DE ROBLOX DATASTORE (OPEN CLOUD) ---
 def mark_roblox_verified(roblox_id: str, discord_id: str):
     if not ROBLOX_UNIVERSE_ID or not ROBLOX_API_KEY:
+        print("⚠️ [FASTAPI] Faltan ROBLOX_UNIVERSE_ID o ROBLOX_API_KEY en las variables de entorno.")
         return
+        
     url = f"https://apis.roblox.com/datastores/v1/universes/{ROBLOX_UNIVERSE_ID}/standard-datastores/datastore/entries/entry?datastoreName=DiscordVerified&entryKey={roblox_id}"
     headers = {
         "x-api-key": ROBLOX_API_KEY,
@@ -56,9 +58,10 @@ def mark_roblox_verified(roblox_id: str, discord_id: str):
         "verifiedAt": int(datetime.now(timezone.utc).timestamp() * 1000)
     }
     try:
-        requests.post(url, headers=headers, json=body)
+        response = requests.post(url, headers=headers, json=body)
+        print(f"🔍 [FASTAPI] Respuesta de Roblox DataStore al guardar {roblox_id}: {response.status_code} - {response.text}")
     except Exception as e:
-        print("Error updating Roblox DataStore (mark):", e)
+        print("❌ [FASTAPI] Error de conexión con Roblox DataStore:", e)
 
 def unmark_roblox_verified(roblox_id: str):
     if not ROBLOX_UNIVERSE_ID or not ROBLOX_API_KEY:
@@ -68,9 +71,10 @@ def unmark_roblox_verified(roblox_id: str):
         "x-api-key": ROBLOX_API_KEY
     }
     try:
-        requests.delete(url, headers=headers)
+        response = requests.delete(url, headers=headers)
+        print(f"🗑️ [FASTAPI] Respuesta de Roblox DataStore al borrar {roblox_id}: {response.status_code}")
     except Exception as e:
-        print("Error updating Roblox DataStore (unmark):", e)
+        print("❌ [FASTAPI] Error al borrar del Roblox DataStore:", e)
 # -------------------------------------------------
 
 @app.get("/")
@@ -86,7 +90,6 @@ async def admin_unlink(discord_id: str = Query(...), x_admin_key: str = Header(N
     conn = sqlite3.connect("verification.db")
     cursor = conn.cursor()
     
-    # Obtener el roblox_id antes de borrar para quitarlo del DataStore del juego
     cursor.execute("SELECT roblox_id FROM verified_users WHERE discord_id = ?", (discord_id,))
     row = cursor.fetchone()
     
@@ -247,7 +250,7 @@ async def roblox_callback(code: str, state: str):
         print("Error saving to database:", e)
         return HTMLResponse(content="<h3 style='color:white; text-align:center; font-family:sans-serif; margin-top:20vh;'>Database error or account already linked.</h3>", status_code=400)
 
-    # REGISTRAR EN EL DATASTORE DE ROBLOX (Para que el juego lo deje entrar)
+    # REGISTRAR EN EL DATASTORE DE ROBLOX
     mark_roblox_verified(roblox_id, discord_id)
 
     # Asignar rol y cambiar apodo en Discord
