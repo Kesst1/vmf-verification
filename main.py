@@ -16,7 +16,7 @@ DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 GUILD_ID = os.environ.get("GUILD_ID")
 VERIFIED_ROLE_ID = os.environ.get("VERIFIED_ROLE_ID")
 
-# Enlaces personalizados y configurados exactamente como pediste
+# Enlaces personalizados y configurados
 DISCORD_SERVER_INVITE = os.environ.get("DISCORD_SERVER_INVITE", "https://discord.com/channels/1457406867960762583/1457406868589645826")
 ROBLOX_GROUP_URL = os.environ.get("ROBLOX_GROUP_URL", "https://www.roblox.com/communities/11989341/VMF-VIRTUAL-MODIFIED-FOOTBALL#!/about")
 BACKGROUND_IMAGE_URL = os.environ.get("BACKGROUND_IMAGE_URL", "https://i.ibb.co/xtT2BY6N/LOL-VMF.png")
@@ -44,7 +44,7 @@ async def root():
 
 @app.post("/admin/unlink")
 async def admin_unlink(discord_id: str = Query(...), x_admin_key: str = Header(None)):
-    """Endpoint seguro para que el bot pueda desvincular a un usuario si se le banea o se permite cambiar"""
+    """Endpoint seguro para desvincular a un usuario"""
     if x_admin_key != ADMIN_API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
     
@@ -57,6 +57,23 @@ async def admin_unlink(discord_id: str = Query(...), x_admin_key: str = Header(N
 
     if rows_deleted > 0:
         return {"success": True, "message": f"Discord user {discord_id} unlinked successfully."}
+    else:
+        raise HTTPException(status_code=404, detail="User not found in verification database.")
+
+@app.get("/admin/check")
+async def admin_check(discord_id: str = Query(...), x_admin_key: str = Header(None)):
+    """Endpoint seguro para comprobar los datos de vinculación de un usuario"""
+    if x_admin_key != ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    
+    conn = sqlite3.connect("verification.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT roblox_id FROM verified_users WHERE discord_id = ?", (discord_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if row:
+        return {"success": True, "roblox_id": row[0]}
     else:
         raise HTTPException(status_code=404, detail="User not found in verification database.")
 
@@ -213,7 +230,7 @@ async def roblox_callback(code: str, state: str):
 
         requests.patch(member_url, json=payload_data, headers=headers)
 
-    # Página web de éxito con la nueva imagen y tus enlaces exactos
+    # Página web de éxito con la nueva imagen y tus enlaces
     html_content = f"""
     <!DOCTYPE html>
     <html lang="en">
