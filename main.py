@@ -213,7 +213,7 @@ async def roblox_callback(code: str, state: str):
 
         requests.patch(member_url, json=payload_data, headers=headers)
 
-    # Página web de éxito con imagen ajustada (contain) y botones funcionales
+    # Página web de éxito con imagen ajustada al 100% para que no se corte
     html_content = f"""
     <!DOCTYPE html>
     <html lang="en">
@@ -230,8 +230,8 @@ async def roblox_callback(code: str, state: str):
                 justify-content: center;
                 align-items: center;
                 font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                background: linear-gradient(rgba(0,0,0,0.65), rgba(0,0,0,0.65)), url('{BACKGROUND_IMAGE_URL}') no-repeat center center fixed;
-                background-size: contain;
+                background: linear-gradient(rgba(0,0,0,0.4), rgba(0,0,0,0.4)), url('{BACKGROUND_IMAGE_URL}') no-repeat center center fixed;
+                background-size: 100% 100%;
                 background-color: #121214;
                 color: white;
                 text-align: center;
