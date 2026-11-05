@@ -123,8 +123,8 @@ async def admin_check(discord_id: str = Query(...), x_admin_key: str = Header(No
         raise HTTPException(status_code=404, detail="User not found in verification database.")
 
 @app.get("/api/check-role")
-async def check_role(roblox_id: str = Query(...), role_id: str = Query(...)):
-    """Endpoint para que Roblox compruebe si el usuario tiene un rol específico en Discord"""
+async def check_role(roblox_id: str = Query(...)):
+    """Endpoint para que Roblox compruebe si el usuario está verificado en la base de datos"""
     conn = sqlite3.connect("verification.db")
     cursor = conn.cursor()
     cursor.execute("SELECT discord_id FROM verified_users WHERE roblox_id = ?", (roblox_id,))
@@ -134,25 +134,7 @@ async def check_role(roblox_id: str = Query(...), role_id: str = Query(...)):
     if not row:
         return {"has_role": False, "reason": "Not verified in database"}
     
-    discord_id = row[0]
-
-    if not DISCORD_TOKEN or not GUILD_ID:
-        return {"has_role": False, "reason": "Missing Discord credentials on server"}
-
-    member_url = f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{discord_id}"
-    headers = {"Authorization": f"Bot {DISCORD_TOKEN}"}
-
-    try:
-        resp = requests.get(member_url, headers=headers)
-        if resp.status_code == 200:
-            member_data = resp.json()
-            roles = member_data.get("roles", [])
-            has_role = role_id in roles
-            return {"has_role": has_role}
-        else:
-            return {"has_role": False, "reason": "Member not found in Discord guild"}
-    except Exception as e:
-        return {"has_role": False, "reason": str(e)}
+    return {"has_role": True}
 
 @app.get("/callback", response_class=HTMLResponse)
 async def roblox_callback(code: str, state: str):
